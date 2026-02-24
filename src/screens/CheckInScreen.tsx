@@ -18,6 +18,7 @@ const uuidv4 = uuid.v4;
 import { ActivityCheckIn, DailyWorkout, RPE, QualityScore } from '../context/types';
 import { calculatePace } from '../utils/paceCalculator';
 import AdaptationService from '../services/adaptation.service';
+import { getDynamicWeekNumber } from '../utils/dateHelpers';
 
 interface Props {
   route: {
@@ -30,7 +31,7 @@ interface Props {
 
 export function CheckInScreen({ route, navigation }: Props) {
   const { workout } = route.params;
-  const { state, addCheckIn } = useApp();
+  const { state, addCheckIn, updateTrainingPlan } = useApp();
 
   // Form state
   const [completed, setCompleted] = useState(true);
@@ -50,7 +51,7 @@ export function CheckInScreen({ route, navigation }: Props) {
 
   const handleSubmit = async () => {
     // Validation
-    if (completed && (!distance || !duration)) {
+    if (completed && workout.type !== 'rest' && (!distance || !duration)) {
       Alert.alert('Missing Information', 'Please enter distance and duration for completed workout.');
       return;
     }
@@ -98,43 +99,53 @@ export function CheckInScreen({ route, navigation }: Props) {
   };
 
   const adaptFutureWorkouts = (checkIn: ActivityCheckIn) => {
-    // Get recent check-ins for adaptation
-    const recentDates = Object.keys(state.checkIns)
-      .sort()
-      .slice(-7); // Last 7 days
-    const recentCheckIns = recentDates
-      .map((date) => state.checkIns[date])
-      .concat([checkIn]);
+    if (!state.trainingPlan) return;
 
-    // Adapt tomorrow's workout if applicable
-    // (In a real implementation, this would update the training plan)
-    // For now, just log the adaptation result
+    // Get recent check-ins for adaptation
+    const recentDates = Object.keys(state.checkIns).sort().slice(-7);
+    const recentCheckIns = recentDates.map((date) => state.checkIns[date]).concat([checkIn]);
+
+    // Find tomorrow's workout and its position in the plan
     const tomorrow = new Date(workout.date);
     tomorrow.setDate(tomorrow.getDate() + 1);
     const tomorrowDate = tomorrow.toISOString().split('T')[0];
 
-    // Find tomorrow's workout
     let tomorrowWorkout: DailyWorkout | undefined;
-    if (state.trainingPlan) {
-      for (const week of state.trainingPlan.weeks) {
-        tomorrowWorkout = week.workouts.find((w) => w.date === tomorrowDate);
-        if (tomorrowWorkout) break;
+    let weekIndex = -1;
+    let workoutIndex = -1;
+
+    for (let wi = 0; wi < state.trainingPlan.weeks.length; wi++) {
+      const woi = state.trainingPlan.weeks[wi].workouts.findIndex((w) => w.date === tomorrowDate);
+      if (woi !== -1) {
+        tomorrowWorkout = state.trainingPlan.weeks[wi].workouts[woi];
+        weekIndex = wi;
+        workoutIndex = woi;
+        break;
       }
     }
 
-    if (tomorrowWorkout && state.trainingPlan) {
-      const result = AdaptationService.adaptWorkout({
-        plannedWorkout: tomorrowWorkout,
-        recentCheckIns,
-        currentWeek: state.trainingPlan.currentWeek,
-        totalWeeks: state.trainingPlan.totalWeeks,
-        weeklyMileage: state.trainingPlan.weeks.map((w) => w.totalMileage),
-      });
+    if (!tomorrowWorkout || weekIndex === -1) return;
 
-      if (result.adjustedWorkout.modified) {
-        console.log('Tomorrow\'s workout adapted:', result.reason);
-        // In a full implementation, update the training plan here
-      }
+    const dynamicWeek = getDynamicWeekNumber(state.trainingPlan.startDate, state.trainingPlan.totalWeeks);
+    const result = AdaptationService.adaptWorkout({
+      plannedWorkout: tomorrowWorkout,
+      recentCheckIns,
+      currentWeek: dynamicWeek,
+      totalWeeks: state.trainingPlan.totalWeeks,
+      weeklyMileage: state.trainingPlan.weeks.map((w) => w.totalMileage),
+    });
+
+    if (result.adjustedWorkout.modified) {
+      const updatedWeeks = state.trainingPlan.weeks.map((week, wi) => {
+        if (wi !== weekIndex) return week;
+        return {
+          ...week,
+          workouts: week.workouts.map((wo, woi) =>
+            woi === workoutIndex ? result.adjustedWorkout : wo
+          ),
+        };
+      });
+      updateTrainingPlan({ weeks: updatedWeeks });
     }
   };
 
@@ -186,8 +197,8 @@ export function CheckInScreen({ route, navigation }: Props) {
         </Card.Content>
       </Card>
 
-      {/* Workout Details (if completed) */}
-      {completed && (
+      {/* Workout Details (if completed and not a rest day) */}
+      {completed && workout.type !== 'rest' && (
         <Card style={styles.card}>
           <Card.Content>
             <Title>Workout Details</Title>
