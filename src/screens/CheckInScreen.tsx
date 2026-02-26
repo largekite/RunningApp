@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, ScrollView, StyleSheet, Alert } from 'react-native';
 import {
   Card,
@@ -19,6 +19,7 @@ import { ActivityCheckIn, DailyWorkout, RPE, QualityScore } from '../context/typ
 import { calculatePace } from '../utils/paceCalculator';
 import AdaptationService from '../services/adaptation.service';
 import { getDynamicWeekNumber } from '../utils/dateHelpers';
+import NotificationService from '../services/notification.service';
 
 interface Props {
   route: {
@@ -48,6 +49,112 @@ export function CheckInScreen({ route, navigation }: Props) {
   const calculatedPace = distance && duration
     ? calculatePace(parseFloat(distance), parseFloat(duration))
     : null;
+
+  // Ghost: find last completed check-in of the same workout type
+  const ghostData = useMemo(() => {
+    if (workout.type === 'rest' || !state.trainingPlan) return null;
+
+    // Build workoutId -> type map from training plan
+    const workoutTypeMap: Record<string, string> = {};
+    for (const week of state.trainingPlan.weeks) {
+      for (const wo of week.workouts) {
+        workoutTypeMap[wo.id] = wo.type;
+      }
+    }
+
+    // Most recent completed check-in of the same type (excluding today)
+    return Object.values(state.checkIns)
+      .filter(c =>
+        c.completed &&
+        c.date !== workout.date &&
+        workoutTypeMap[c.workoutId] === workout.type &&
+        c.actualDistance != null &&
+        c.actualPace != null
+      )
+      .sort((a, b) => b.date.localeCompare(a.date))[0] || null;
+  }, [state.checkIns, state.trainingPlan, workout.date, workout.type]);
+
+  const formatDuration = (minutes: number) => {
+    const h = Math.floor(minutes / 60);
+    const m = Math.round(minutes % 60);
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  };
+
+  const paceToSeconds = (pace: string) => {
+    const [min, sec] = pace.split(':').map(Number);
+    return min * 60 + (sec || 0);
+  };
+
+  // PR detection: best pace and longest run for this workout type
+  const prData = useMemo(() => {
+    if (workout.type === 'rest' || !state.trainingPlan) return null;
+
+    const workoutTypeMap: Record<string, string> = {};
+    for (const week of state.trainingPlan.weeks) {
+      for (const wo of week.workouts) {
+        workoutTypeMap[wo.id] = wo.type;
+      }
+    }
+
+    const sameType = Object.values(state.checkIns).filter(c =>
+      c.completed &&
+      c.date !== workout.date &&
+      workoutTypeMap[c.workoutId] === workout.type &&
+      c.actualPace != null
+    );
+    if (sameType.length === 0) return null;
+
+    const bestEntry = sameType.reduce((prev, curr) =>
+      paceToSeconds(curr.actualPace!) < paceToSeconds(prev.actualPace!) ? curr : prev
+    );
+    const longestDistance = Math.max(...sameType.map(c => c.actualDistance || 0));
+
+    return {
+      bestPace: bestEntry.actualPace!,
+      bestPaceSeconds: paceToSeconds(bestEntry.actualPace!),
+      longestDistance,
+    };
+  }, [state.checkIns, state.trainingPlan, workout.date, workout.type]);
+
+  // Readiness score based on recent sleep, RPE, and completion rate
+  const readiness = useMemo(() => {
+    const recent = Object.values(state.checkIns)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 7);
+    if (recent.length === 0) return null;
+
+    let score = 100;
+
+    const lastSleep = recent[0]?.sleepHours ?? 7;
+    if (lastSleep < 6) score -= 30;
+    else if (lastSleep < 7) score -= 15;
+
+    const qualityEntries = recent.filter(c => c.sleepQuality != null);
+    if (qualityEntries.length > 0) {
+      const avg = qualityEntries.reduce((s, c) => s + c.sleepQuality!, 0) / qualityEntries.length;
+      if (avg < 2) score -= 15;
+      else if (avg < 3) score -= 8;
+    }
+
+    const lastCompleted = recent.find(c => c.completed && c.perceivedEffort != null);
+    const lastRPE = lastCompleted?.perceivedEffort ?? 3;
+    if (lastRPE >= 5) score -= 25;
+    else if (lastRPE >= 4) score -= 15;
+
+    let consecutiveMissed = 0;
+    for (const c of recent) {
+      if (!c.completed) consecutiveMissed++;
+      else break;
+    }
+    if (consecutiveMissed >= 2) score -= 20;
+    else if (consecutiveMissed === 1) score -= 5;
+
+    score = Math.max(0, Math.min(100, score));
+
+    if (score >= 70) return { score, label: 'High', color: '#2e7d32' };
+    if (score >= 40) return { score, label: 'Moderate', color: '#e65100' };
+    return { score, label: 'Low', color: '#c62828' };
+  }, [state.checkIns]);
 
   const handleSubmit = async () => {
     // Validation
@@ -80,16 +187,31 @@ export function CheckInScreen({ route, navigation }: Props) {
       // Save check-in
       await addCheckIn(checkIn);
 
+      // Cancel the evening nudge — workout is logged
+      await NotificationService.cancelEveningNudge();
+
       // If completed, run adaptation algorithm for future workouts
       if (completed && state.trainingPlan) {
         adaptFutureWorkouts(checkIn);
       }
 
-      Alert.alert(
-        'Success!',
-        completed ? 'Workout logged successfully!' : 'Workout marked as skipped.',
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
-      );
+      let successMsg = completed ? 'Workout logged!' : 'Workout marked as skipped.';
+      if (completed && ghostData && calculatedPace && ghostData.actualPace) {
+        const diffSecs = paceToSeconds(ghostData.actualPace) - paceToSeconds(calculatedPace);
+        if (diffSecs > 0) {
+          const m = Math.floor(Math.abs(diffSecs) / 60);
+          const s = Math.abs(diffSecs) % 60;
+          successMsg += `\n\n👻 You beat your ghost by ${m > 0 ? `${m}m ` : ''}${s}s/mile!`;
+        } else if (diffSecs < 0) {
+          const m = Math.floor(Math.abs(diffSecs) / 60);
+          const s = Math.abs(diffSecs) % 60;
+          successMsg += `\n\n👻 Ghost was ${m > 0 ? `${m}m ` : ''}${s}s/mile faster. Keep chasing!`;
+        } else {
+          successMsg += '\n\n👻 You matched your ghost exactly!';
+        }
+      }
+
+      Alert.alert('Success!', successMsg, [{ text: 'OK', onPress: () => navigation.goBack() }]);
     } catch (error) {
       console.error('Error saving check-in:', error);
       Alert.alert('Error', 'Failed to save check-in. Please try again.');
@@ -161,6 +283,27 @@ export function CheckInScreen({ route, navigation }: Props) {
 
   return (
     <ScrollView style={styles.container}>
+      {/* Readiness Score */}
+      {readiness && (
+        <Card style={styles.card}>
+          <Card.Content>
+            <View style={styles.readinessRow}>
+              <View>
+                <Paragraph style={styles.readinessLabel}>Today's Readiness</Paragraph>
+                <Paragraph style={[styles.readinessScore, { color: readiness.color }]}>
+                  {readiness.label}
+                </Paragraph>
+              </View>
+              <View style={[styles.readinessBadge, { backgroundColor: readiness.color + '22' }]}>
+                <Paragraph style={[styles.readinessNumber, { color: readiness.color }]}>
+                  {readiness.score}
+                </Paragraph>
+              </View>
+            </View>
+          </Card.Content>
+        </Card>
+      )}
+
       <Card style={styles.card}>
         <Card.Content>
           <Title>Log Workout</Title>
@@ -173,6 +316,42 @@ export function CheckInScreen({ route, navigation }: Props) {
           )}
         </Card.Content>
       </Card>
+
+      {/* Ghost Card — previous performance for this workout type */}
+      {ghostData && (
+        <Card style={styles.ghostCard}>
+          <Card.Content>
+            <View style={styles.ghostHeader}>
+              <Paragraph style={styles.ghostTitle}>👻 Your Ghost</Paragraph>
+              <Paragraph style={styles.ghostDate}>
+                {new Date(ghostData.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+              </Paragraph>
+            </View>
+            <View style={styles.ghostStats}>
+              <View style={styles.ghostStat}>
+                <Paragraph style={styles.ghostNumber}>{ghostData.actualDistance?.toFixed(1)}</Paragraph>
+                <Paragraph style={styles.ghostLabel}>miles</Paragraph>
+              </View>
+              <View style={styles.ghostStat}>
+                <Paragraph style={styles.ghostNumber}>{ghostData.actualPace}</Paragraph>
+                <Paragraph style={styles.ghostLabel}>/mile</Paragraph>
+              </View>
+              {ghostData.actualDuration != null && (
+                <View style={styles.ghostStat}>
+                  <Paragraph style={styles.ghostNumber}>{formatDuration(ghostData.actualDuration)}</Paragraph>
+                  <Paragraph style={styles.ghostLabel}>time</Paragraph>
+                </View>
+              )}
+              {ghostData.perceivedEffort != null && (
+                <View style={styles.ghostStat}>
+                  <Paragraph style={styles.ghostNumber}>RPE {ghostData.perceivedEffort}</Paragraph>
+                  <Paragraph style={styles.ghostLabel}>effort</Paragraph>
+                </View>
+              )}
+            </View>
+          </Card.Content>
+        </Card>
+      )}
 
       {/* Completion Toggle */}
       <Card style={styles.card}>
@@ -225,6 +404,18 @@ export function CheckInScreen({ route, navigation }: Props) {
               <HelperText type="info">
                 Average Pace: {calculatedPace} /mile
               </HelperText>
+            )}
+
+            {calculatedPace && prData && paceToSeconds(calculatedPace) < prData.bestPaceSeconds && (
+              <View style={styles.prBanner}>
+                <Paragraph style={styles.prText}>🏆 New PR pace! (prev best: {prData.bestPace}/mile)</Paragraph>
+              </View>
+            )}
+
+            {distance && prData && workout.type === 'long_run' && parseFloat(distance) > prData.longestDistance && (
+              <View style={styles.prBanner}>
+                <Paragraph style={styles.prText}>🏆 Longest run ever! (prev: {prData.longestDistance.toFixed(1)} mi)</Paragraph>
+              </View>
             )}
 
             <Divider style={styles.divider} />
@@ -383,5 +574,80 @@ const styles = StyleSheet.create({
   },
   submitButton: {
     marginVertical: 24,
+  },
+  ghostCard: {
+    marginBottom: 16,
+    backgroundColor: '#f3e5f5',
+    borderLeftWidth: 4,
+    borderLeftColor: '#6200ea',
+  },
+  ghostHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  ghostTitle: {
+    fontWeight: 'bold',
+    color: '#6200ea',
+    fontSize: 14,
+  },
+  ghostDate: {
+    fontSize: 12,
+    color: '#999',
+  },
+  ghostStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingTop: 4,
+  },
+  ghostStat: {
+    alignItems: 'center',
+  },
+  ghostNumber: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#6200ea',
+  },
+  ghostLabel: {
+    fontSize: 11,
+    color: '#666',
+    marginTop: 2,
+  },
+  readinessRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  readinessLabel: {
+    fontSize: 12,
+    color: '#666',
+  },
+  readinessScore: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginTop: 2,
+  },
+  readinessBadge: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  readinessNumber: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  prBanner: {
+    backgroundColor: '#e8f5e9',
+    borderRadius: 6,
+    padding: 8,
+    marginTop: 8,
+  },
+  prText: {
+    color: '#2e7d32',
+    fontWeight: 'bold',
+    fontSize: 13,
   },
 });

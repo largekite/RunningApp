@@ -1,11 +1,21 @@
 import React, { useState } from 'react';
-import { View, ScrollView, StyleSheet, Alert } from 'react-native';
+import { View, ScrollView, StyleSheet, Alert, Switch } from 'react-native';
 import { Card, Title, Paragraph, Button, List, TextInput, HelperText, Divider } from 'react-native-paper';
 import { useApp } from '../context/AppContext';
+import NotificationService from '../services/notification.service';
 
 export function SettingsScreen() {
   const { state, updateUser, resetApp } = useApp();
   const [editing, setEditing] = useState(false);
+
+  // Notification state
+  const [notifEnabled, setNotifEnabled] = useState(
+    state.user?.preferences?.notificationsEnabled ?? false
+  );
+  const [reminderTime, setReminderTime] = useState(
+    state.user?.preferences?.reminderTime || '07:00'
+  );
+  const [notifSaving, setNotifSaving] = useState(false);
 
   const [name, setName] = useState(state.user?.name || '');
   const [currentMileage, setCurrentMileage] = useState(
@@ -43,6 +53,46 @@ export function SettingsScreen() {
       longestRun: parseFloat(longestRun),
     });
     setEditing(false);
+  };
+
+  const handleToggleNotifications = async (value: boolean) => {
+    setNotifEnabled(value);
+    if (!value) {
+      await NotificationService.cancelAll();
+      await updateUser({
+        preferences: { ...state.user!.preferences, notificationsEnabled: false },
+      });
+    } else {
+      const granted = await NotificationService.requestPermissions();
+      if (!granted) {
+        setNotifEnabled(false);
+        Alert.alert('Permission Denied', 'Enable notifications in your device Settings to use this feature.');
+        return;
+      }
+      await NotificationService.scheduleWorkoutReminder(reminderTime);
+      await NotificationService.scheduleEveningNudge();
+      await updateUser({
+        preferences: { ...state.user!.preferences, notificationsEnabled: true, reminderTime },
+      });
+    }
+  };
+
+  const handleSaveReminderTime = async () => {
+    const valid = /^([01]\d|2[0-3]):([0-5]\d)$/.test(reminderTime);
+    if (!valid) {
+      Alert.alert('Invalid Time', 'Enter time in HH:MM format (e.g. 07:00)');
+      return;
+    }
+    setNotifSaving(true);
+    try {
+      await NotificationService.scheduleWorkoutReminder(reminderTime);
+      await updateUser({
+        preferences: { ...state.user!.preferences, notificationsEnabled: true, reminderTime },
+      });
+      Alert.alert('Saved', `Reminder set for ${reminderTime} daily.`);
+    } finally {
+      setNotifSaving(false);
+    }
   };
 
   const handleResetApp = () => {
@@ -173,6 +223,50 @@ export function SettingsScreen() {
         </Card.Content>
       </Card>
 
+      {/* Notifications */}
+      <Card style={styles.card}>
+        <Card.Content>
+          <Title>Notifications</Title>
+
+          <View style={styles.notifRow}>
+            <Paragraph>Daily workout reminder</Paragraph>
+            <Switch
+              value={notifEnabled}
+              onValueChange={handleToggleNotifications}
+              trackColor={{ true: '#6200ea' }}
+            />
+          </View>
+
+          {notifEnabled && (
+            <>
+              <Paragraph style={styles.notifHint}>Reminder time (HH:MM)</Paragraph>
+              <View style={styles.notifTimeRow}>
+                <TextInput
+                  value={reminderTime}
+                  onChangeText={setReminderTime}
+                  mode="outlined"
+                  keyboardType="numbers-and-punctuation"
+                  style={styles.notifTimeInput}
+                  placeholder="07:00"
+                />
+                <Button
+                  mode="contained"
+                  onPress={handleSaveReminderTime}
+                  loading={notifSaving}
+                  disabled={notifSaving}
+                  style={styles.notifSaveButton}
+                >
+                  Save
+                </Button>
+              </View>
+              <Paragraph style={styles.notifHint}>
+                You'll also get a 9 PM nudge if you haven't logged your workout.
+              </Paragraph>
+            </>
+          )}
+        </Card.Content>
+      </Card>
+
       {/* Danger Zone */}
       <Card style={styles.card}>
         <Card.Content>
@@ -227,6 +321,30 @@ const styles = StyleSheet.create({
   },
   resetButton: {
     borderColor: '#d32f2f',
+  },
+  notifRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: 8,
+  },
+  notifTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginTop: 4,
+  },
+  notifTimeInput: {
+    flex: 1,
+    height: 44,
+  },
+  notifSaveButton: {
+    marginTop: 4,
+  },
+  notifHint: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 8,
   },
   footer: {
     marginTop: 16,
