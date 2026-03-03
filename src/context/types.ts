@@ -1,6 +1,6 @@
 // Core Data Types for 50-Mile Training App
 
-export type WorkoutType = 'easy_run' | 'long_run' | 'tempo' | 'intervals' | 'recovery' | 'rest';
+export type WorkoutType = 'easy_run' | 'long_run' | 'tempo' | 'intervals' | 'recovery' | 'rest' | 'strides' | 'fartlek' | 'hill_repeats' | 'cross_training';
 export type ExperienceLevel = 'beginner' | 'intermediate' | 'advanced';
 export type Units = 'miles' | 'km';
 export type RPE = 1 | 2 | 3 | 4 | 5; // Rate of Perceived Exertion
@@ -26,6 +26,14 @@ export interface WeeklyPlan {
   workouts: DailyWorkout[];
 }
 
+export interface WorkoutSegment {
+  name: string;         // e.g., 'Warm-up', 'Main Set', 'Cool-down'
+  distance?: number;    // miles
+  duration?: number;    // minutes
+  pace?: string;        // target pace (min:sec per mile)
+  description: string;  // what to do
+}
+
 export interface DailyWorkout {
   id: string;
   date: string; // ISO date string
@@ -34,6 +42,7 @@ export interface DailyWorkout {
   targetPace?: string; // e.g., "8:30" (min:sec per mile)
   targetDuration?: number; // in minutes
   notes?: string;
+  segments?: WorkoutSegment[]; // Structured warm-up / main set / cool-down breakdown
   modified?: boolean; // True if workout was adjusted by adaptive algorithm
   modificationReason?: string;
 }
@@ -67,6 +76,7 @@ export interface UserProfile {
   experienceLevel: ExperienceLevel;
   currentWeeklyMileage: number;
   longestRun: number;
+  goalFinishTime?: string; // e.g., "3:45:00" — target race finish time
   preferences: UserPreferences;
   createdAt: string;
   updatedAt: string;

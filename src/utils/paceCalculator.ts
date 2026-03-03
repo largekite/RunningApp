@@ -50,7 +50,7 @@ export function adjustPace(pace: string, percentChange: number): string {
  */
 export function getRecommendedPace(
   easyPace: string,
-  workoutType: 'easy_run' | 'long_run' | 'tempo' | 'intervals' | 'recovery' | 'rest'
+  workoutType: 'easy_run' | 'long_run' | 'tempo' | 'intervals' | 'recovery' | 'rest' | 'strides' | 'fartlek' | 'hill_repeats' | 'cross_training'
 ): string {
   const easySeconds = paceToSeconds(easyPace);
 
@@ -64,11 +64,56 @@ export function getRecommendedPace(
       return secondsToPace(easySeconds * 0.92); // ~8% faster than easy (threshold pace)
     case 'intervals':
       return secondsToPace(easySeconds * 0.85); // ~15% faster than easy (5K pace)
+    case 'strides':
+      return secondsToPace(easySeconds * 0.80); // ~20% faster (mile effort)
+    case 'fartlek':
+      return secondsToPace(easySeconds); // Average is easy pace; fast segments vary
+    case 'hill_repeats':
+      return secondsToPace(easySeconds * 0.87); // Hard effort uphill (~13% faster)
+    case 'cross_training':
+      return '0:00'; // N/A — non-running workout
     case 'rest':
       return '0:00';
     default:
       return easyPace;
   }
+}
+
+/**
+ * Calculate goal-race-pace-derived training paces from a finish time target
+ */
+export interface GoalTimePaces {
+  racePace: string;    // Target race pace (min:sec/mile)
+  tempo: string;       // Comfortably hard threshold pace (~25s slower than race pace for marathon+)
+  threshold: string;   // Lactate threshold (~15s slower than race pace)
+  interval: string;    // VO2max intervals (~10s faster than race pace)
+}
+
+export function calculatePacesFromGoalTime(goalFinishTime: string, goalDistance: number): GoalTimePaces {
+  // Parse HH:MM:SS or H:MM:SS
+  const parts = goalFinishTime.split(':').map(Number);
+  let totalSeconds: number;
+  if (parts.length === 3) {
+    totalSeconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+  } else if (parts.length === 2) {
+    totalSeconds = parts[0] * 60 + parts[1];
+  } else {
+    return { racePace: '0:00', tempo: '0:00', threshold: '0:00', interval: '0:00' };
+  }
+
+  const racePaceSeconds = totalSeconds / goalDistance;
+
+  // Pace offsets vary by race distance (shorter races = tighter spread)
+  const tempoOffset = goalDistance >= 26.2 ? 25 : goalDistance >= 13.1 ? 20 : 15;
+  const thresholdOffset = goalDistance >= 26.2 ? 15 : goalDistance >= 13.1 ? 10 : 8;
+  const intervalOffset = goalDistance >= 26.2 ? 10 : goalDistance >= 13.1 ? 8 : 6;
+
+  return {
+    racePace: secondsToPace(racePaceSeconds),
+    tempo: secondsToPace(racePaceSeconds + tempoOffset),
+    threshold: secondsToPace(racePaceSeconds + thresholdOffset),
+    interval: secondsToPace(racePaceSeconds - intervalOffset),
+  };
 }
 
 /**

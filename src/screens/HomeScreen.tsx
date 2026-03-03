@@ -105,13 +105,44 @@ export function HomeScreen({ navigation }: any) {
                   </View>
                 )}
 
-                {todayWorkout.targetPace && (
+                {todayWorkout.targetPace && todayWorkout.targetPace !== '0:00' && (
                   <View style={styles.detail}>
-                    <Paragraph style={styles.detailLabel}>Target Pace</Paragraph>
-                    <Title>{todayWorkout.targetPace} /mile</Title>
+                    <Paragraph style={styles.detailLabel}>Avg Pace</Paragraph>
+                    <Title>{todayWorkout.targetPace} /mi</Title>
                   </View>
                 )}
               </View>
+
+              {todayWorkout.segments && todayWorkout.segments.length > 0 && (
+                <>
+                  <Divider style={styles.divider} />
+                  <Paragraph style={styles.segmentsLabel}>Workout Breakdown</Paragraph>
+                  {todayWorkout.segments.map((seg, idx) => (
+                    <View key={idx} style={styles.segmentRow}>
+                      <View style={styles.segmentIndex}>
+                        <Paragraph style={styles.segmentIndexText}>{idx + 1}</Paragraph>
+                      </View>
+                      <View style={styles.segmentBody}>
+                        <View style={styles.segmentHeader}>
+                          <Paragraph style={styles.segmentName}>{seg.name}</Paragraph>
+                          <View style={styles.segmentMeta}>
+                            {seg.distance != null && (
+                              <Paragraph style={styles.segmentStat}>{seg.distance} mi</Paragraph>
+                            )}
+                            {seg.duration != null && !seg.distance && (
+                              <Paragraph style={styles.segmentStat}>{seg.duration} min</Paragraph>
+                            )}
+                            {seg.pace && seg.pace !== '0:00' && (
+                              <Paragraph style={styles.segmentPace}>@ {seg.pace}/mi</Paragraph>
+                            )}
+                          </View>
+                        </View>
+                        <Paragraph style={styles.segmentDesc}>{seg.description}</Paragraph>
+                      </View>
+                    </View>
+                  ))}
+                </>
+              )}
 
               {todayWorkout.notes && (
                 <>
@@ -317,5 +348,66 @@ const styles = StyleSheet.create({
     color: '#6200ea',
     fontWeight: 'bold',
     textAlign: 'center',
+  },
+  segmentsLabel: {
+    fontWeight: 'bold',
+    fontSize: 13,
+    color: '#444',
+    marginTop: 4,
+    marginBottom: 8,
+  },
+  segmentRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 10,
+  },
+  segmentIndex: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#6200ea',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+    marginRight: 10,
+  },
+  segmentIndexText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  segmentBody: {
+    flex: 1,
+  },
+  segmentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 2,
+  },
+  segmentName: {
+    fontWeight: 'bold',
+    fontSize: 14,
+    color: '#222',
+  },
+  segmentMeta: {
+    flexDirection: 'row',
+    gap: 6,
+    alignItems: 'center',
+  },
+  segmentStat: {
+    fontSize: 12,
+    color: '#555',
+    fontWeight: 'bold',
+  },
+  segmentPace: {
+    fontSize: 12,
+    color: '#6200ea',
+    fontWeight: 'bold',
+  },
+  segmentDesc: {
+    fontSize: 12,
+    color: '#666',
+    lineHeight: 17,
   },
 });

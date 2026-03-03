@@ -143,6 +143,119 @@ export const nutritionTips: NutritionTip[] = [
     ],
   },
 
+  // Strides Tips
+  {
+    id: 'strides_1',
+    workoutType: 'strides',
+    title: 'Light Snack Before Strides',
+    description:
+      'Strides are short and low-volume. A light snack 30-45 min before keeps energy topped up.',
+    timing: '30-45 minutes before',
+    recommendations: ['Banana', 'Small handful of dates', 'A few crackers', 'Water'],
+  },
+  {
+    id: 'strides_2',
+    workoutType: 'strides',
+    title: 'Hydrate Well',
+    description:
+      'Even on lighter days, hydration affects speed and stride efficiency. Drink consistently.',
+    timing: 'throughout day',
+    recommendations: [
+      '16 oz water before the run',
+      'Electrolytes if weather is hot',
+      'Aim for pale yellow urine',
+    ],
+  },
+
+  // Fartlek Tips
+  {
+    id: 'fartlek_1',
+    workoutType: 'fartlek',
+    title: 'Moderate Carbs Before Fartlek',
+    description:
+      'Fartlek involves variable intensity — have a moderate carb meal 2 hours before.',
+    timing: '2 hours before',
+    recommendations: [
+      'Oatmeal with banana',
+      'Bagel with peanut butter',
+      'Rice cakes with honey',
+      'Sports drink',
+    ],
+  },
+  {
+    id: 'fartlek_2',
+    workoutType: 'fartlek',
+    title: 'Post-Fartlek Protein',
+    description:
+      'Fast segments tax your muscles. Get 20-25g of protein within 30 minutes after.',
+    timing: 'within 30 minutes after',
+    recommendations: [
+      'Chocolate milk',
+      'Greek yogurt with fruit',
+      'Protein shake',
+      'Turkey wrap',
+    ],
+  },
+
+  // Hill Repeats Tips
+  {
+    id: 'hill_repeats_1',
+    workoutType: 'hill_repeats',
+    title: 'Fuel Up Before Hills',
+    description:
+      'Hill repeats are intense. Eat easily digestible carbs 60-90 minutes before.',
+    timing: '60-90 minutes before',
+    recommendations: [
+      'Banana or energy gel',
+      'White toast with honey',
+      'Sports drink',
+      'Rice cake with jam',
+    ],
+  },
+  {
+    id: 'hill_repeats_2',
+    workoutType: 'hill_repeats',
+    title: 'Rebuild After Hill Work',
+    description:
+      'Hills stress legs heavily. Prioritize protein + carbs within 30 min to kick-start repair.',
+    timing: 'within 30 minutes after',
+    recommendations: [
+      'Protein shake with banana',
+      'Eggs on toast',
+      'Cottage cheese and granola',
+      'Recovery bar',
+    ],
+  },
+
+  // Cross-Training Tips
+  {
+    id: 'cross_training_1',
+    workoutType: 'cross_training',
+    title: 'Balanced Meals on Cross-Training Days',
+    description:
+      'Cross-training days support active recovery. Focus on anti-inflammatory whole foods.',
+    timing: 'throughout day',
+    recommendations: [
+      'Salmon or tuna for omega-3s',
+      'Leafy greens and berries',
+      'Whole grains for sustained energy',
+      'Nuts and seeds for healthy fats',
+    ],
+  },
+  {
+    id: 'cross_training_2',
+    workoutType: 'cross_training',
+    title: 'Stay Hydrated',
+    description:
+      'Hydration aids joint health and reduces soreness. Drink water consistently all day.',
+    timing: 'throughout day',
+    recommendations: [
+      'Aim for 2-3 liters of water',
+      'Add electrolytes if sweating heavily',
+      'Herbal teas and broth count too',
+    ],
+  },
+
   // Rest Day Tips
   {
     id: 'rest_1',

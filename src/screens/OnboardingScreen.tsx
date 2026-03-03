@@ -19,11 +19,13 @@ export function OnboardingScreen({ navigation }: any) {
   const [longestRun, setLongestRun] = useState('');
   const [raceDate, setRaceDate] = useState('');
   const [easyPace, setEasyPace] = useState('9:00');
+  const [goalFinishTime, setGoalFinishTime] = useState('');
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
 
   const distanceOptions = [
+    { label: '5K', value: 3.1 },
     { label: '10K', value: 6.2 },
     { label: 'Half Marathon', value: 13.1 },
     { label: 'Marathon', value: 26.2 },
@@ -42,8 +44,18 @@ export function OnboardingScreen({ navigation }: any) {
     if (submitted) validateFields({ raceDate: formatted });
   };
 
+  // Auto-format goal time as user types: inserts colons at H:MM:SS positions
+  const handleGoalTimeChange = (text: string) => {
+    const digits = text.replace(/\D/g, '').slice(0, 6);
+    let formatted = digits;
+    if (digits.length > 1) formatted = digits.slice(0, 1) + ':' + digits.slice(1);
+    if (digits.length > 3) formatted = formatted.slice(0, 4) + ':' + digits.slice(3);
+    setGoalFinishTime(formatted);
+    if (submitted) validateFields({ goalFinishTime: formatted });
+  };
+
   const validateFields = (overrides: Record<string, string> = {}) => {
-    const vals = { name, currentMileage, longestRun, raceDate, easyPace, ...overrides };
+    const vals = { name, currentMileage, longestRun, raceDate, easyPace, goalFinishTime, ...overrides };
     const newErrors: Record<string, string> = {};
 
     if (!vals.name.trim()) newErrors.name = 'Name is required';
@@ -61,6 +73,8 @@ export function OnboardingScreen({ navigation }: any) {
     }
     if (vals.easyPace && !/^\d+:\d{2}$/.test(vals.easyPace))
       newErrors.easyPace = 'Format must be M:SS (e.g. 9:30)';
+    if (vals.goalFinishTime && !/^\d:\d{2}:\d{2}$/.test(vals.goalFinishTime))
+      newErrors.goalFinishTime = 'Format must be H:MM:SS (e.g. 3:45:00)';
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -78,6 +92,7 @@ export function OnboardingScreen({ navigation }: any) {
         experienceLevel,
         currentWeeklyMileage: parseFloat(currentMileage),
         longestRun: parseFloat(longestRun),
+        goalFinishTime: goalFinishTime || undefined,
         preferences: {
           units: 'miles',
           startDay: 0,
@@ -94,6 +109,7 @@ export function OnboardingScreen({ navigation }: any) {
         longestRun: parseFloat(longestRun),
         experienceLevel,
         easyPace,
+        goalFinishTime: goalFinishTime || undefined,
       });
 
       await setUser(userProfile);
@@ -229,6 +245,21 @@ export function OnboardingScreen({ navigation }: any) {
               error={hasError('easyPace')}
             />
             <HelperText type="error" visible={hasError('easyPace')}>{errors.easyPace}</HelperText>
+
+            <TextInput
+              label="Goal Finish Time (optional)"
+              value={goalFinishTime}
+              onChangeText={handleGoalTimeChange}
+              mode="outlined"
+              style={styles.input}
+              placeholder="e.g., 3:45:00"
+              keyboardType="numeric"
+              maxLength={7}
+              error={hasError('goalFinishTime')}
+            />
+            <HelperText type={hasError('goalFinishTime') ? 'error' : 'info'} visible>
+              {hasError('goalFinishTime') ? errors.goalFinishTime : 'Target finish time — calibrates your training paces'}
+            </HelperText>
           </Card.Content>
         </Card>
 
