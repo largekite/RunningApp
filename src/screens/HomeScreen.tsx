@@ -7,6 +7,7 @@ import NutritionService from '../services/nutrition.service';
 import { getSleepRecommendation } from '../constants/sleepGuidelines';
 import WeatherService, { WeatherData } from '../services/weather.service';
 import { DailyWorkout } from '../context/types';
+import { calculatePacesFromGoalTime } from '../utils/paceCalculator';
 
 // Lazy load training load service
 let TrainingLoadService: any = null;
@@ -31,12 +32,21 @@ export function HomeScreen({ navigation }: any) {
   const trainingLoad = useMemo(() => {
     if (!TrainingLoadService) return null;
     try {
-      const ftpPace = state.user?.goalFinishTime ? undefined : '9:30';
+      let ftpPace = '9:30';
+      if (state.user?.goalFinishTime) {
+        try {
+          const paces = calculatePacesFromGoalTime(
+            state.user.goalFinishTime,
+            state.trainingPlan?.goalDistance ?? 26.2,
+          );
+          ftpPace = paces.tempo ?? '9:30';
+        } catch {}
+      }
       const checkIns = Object.values(state.checkIns).filter(c => c.completed);
       if (checkIns.length === 0) return null;
-      return TrainingLoadService.getCurrentLoad(checkIns, ftpPace ?? '9:30');
+      return TrainingLoadService.getCurrentLoad(checkIns, ftpPace);
     } catch { return null; }
-  }, [state.checkIns, state.user]);
+  }, [state.checkIns, state.user, state.trainingPlan]);
 
   // Today's hydration
   const todayHydration = state.hydrationLogs[today];

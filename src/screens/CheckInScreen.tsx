@@ -61,7 +61,7 @@ export function CheckInScreen({ route, navigation }: Props) {
     ? calculatePace(parseFloat(distance), parseFloat(duration))
     : null;
 
-  // Ghost: find last completed check-in of the same workout type
+  // Ghost: find last completed check-in of the same workout type with similar distance
   const ghostData = useMemo(() => {
     if (workout.type === 'rest' || !state.trainingPlan) return null;
 
@@ -73,17 +73,38 @@ export function CheckInScreen({ route, navigation }: Props) {
       }
     }
 
+    const targetDist = workout.targetDistance;
+
     // Most recent completed check-in of the same type (excluding today)
+    // Distance parity: ghost must be within 25% of today's planned distance
     return Object.values(state.checkIns)
-      .filter(c =>
-        c.completed &&
-        c.date !== workout.date &&
-        workoutTypeMap[c.workoutId] === workout.type &&
-        c.actualDistance != null &&
-        c.actualPace != null
-      )
+      .filter(c => {
+        if (!c.completed || c.date === workout.date) return false;
+        if (workoutTypeMap[c.workoutId] !== workout.type) return false;
+        if (c.actualDistance == null || c.actualPace == null) return false;
+        if (!Number.isFinite(paceToSeconds(c.actualPace))) return false;
+        if (targetDist != null && targetDist > 0) {
+          const ratio = Math.abs(c.actualDistance - targetDist) / targetDist;
+          if (ratio > 0.25) return false;
+        }
+        return true;
+      })
       .sort((a, b) => b.date.localeCompare(a.date))[0] || null;
   }, [state.checkIns, state.trainingPlan, workout.date, workout.type]);
+
+  // True if this is the first time completing this workout type (no ghost, no prior data)
+  const isFirstOfType = useMemo(() => {
+    if (workout.type === 'rest' || !state.trainingPlan || ghostData) return false;
+    const workoutTypeMap: Record<string, string> = {};
+    for (const week of state.trainingPlan.weeks) {
+      for (const wo of week.workouts) {
+        workoutTypeMap[wo.id] = wo.type;
+      }
+    }
+    return !Object.values(state.checkIns).some(
+      c => c.completed && c.date !== workout.date && workoutTypeMap[c.workoutId] === workout.type
+    );
+  }, [state.checkIns, state.trainingPlan, workout.date, workout.type, ghostData]);
 
   const formatDuration = (minutes: number) => {
     const h = Math.floor(minutes / 60);
@@ -107,7 +128,8 @@ export function CheckInScreen({ route, navigation }: Props) {
       c.completed &&
       c.date !== workout.date &&
       workoutTypeMap[c.workoutId] === workout.type &&
-      c.actualPace != null
+      c.actualPace != null &&
+      Number.isFinite(paceToSeconds(c.actualPace!))
     );
     if (sameType.length === 0) return null;
 
@@ -280,17 +302,21 @@ export function CheckInScreen({ route, navigation }: Props) {
 
       let successMsg = 'Workout logged!';
       if (ghostData && calculatedPace && ghostData.actualPace) {
-        const diffSecs = paceToSeconds(ghostData.actualPace) - paceToSeconds(calculatedPace);
-        if (diffSecs > 0) {
-          const m = Math.floor(Math.abs(diffSecs) / 60);
-          const s = Math.abs(diffSecs) % 60;
-          successMsg += `\n\n👻 You beat your ghost by ${m > 0 ? `${m}m ` : ''}${s}s/mile!`;
-        } else if (diffSecs < 0) {
-          const m = Math.floor(Math.abs(diffSecs) / 60);
-          const s = Math.abs(diffSecs) % 60;
-          successMsg += `\n\n👻 Ghost was ${m > 0 ? `${m}m ` : ''}${s}s/mile faster. Keep chasing!`;
-        } else {
-          successMsg += '\n\n👻 You matched your ghost exactly!';
+        const ghostSecs = paceToSeconds(ghostData.actualPace);
+        const currentSecs = paceToSeconds(calculatedPace);
+        if (Number.isFinite(ghostSecs) && Number.isFinite(currentSecs)) {
+          const diffSecs = ghostSecs - currentSecs;
+          if (diffSecs > 0) {
+            const m = Math.floor(Math.abs(diffSecs) / 60);
+            const s = Math.abs(diffSecs) % 60;
+            successMsg += `\n\n👻 You beat your ghost by ${m > 0 ? `${m}m ` : ''}${s}s/mile!`;
+          } else if (diffSecs < 0) {
+            const m = Math.floor(Math.abs(diffSecs) / 60);
+            const s = Math.abs(diffSecs) % 60;
+            successMsg += `\n\n👻 Ghost was ${m > 0 ? `${m}m ` : ''}${s}s/mile faster. Keep chasing!`;
+          } else {
+            successMsg += '\n\n👻 You matched your ghost exactly!';
+          }
         }
       }
 
@@ -443,6 +469,20 @@ export function CheckInScreen({ route, navigation }: Props) {
                 </View>
               )}
             </View>
+          </Card.Content>
+        </Card>
+      )}
+
+      {/* First-time workout type card */}
+      {!ghostData && isFirstOfType && (
+        <Card style={styles.ghostCard}>
+          <Card.Content>
+            <Paragraph style={styles.ghostTitle}>
+              👻 First {workout.type.replace(/_/g, ' ')}!
+            </Paragraph>
+            <Paragraph style={{ color: '#555', marginTop: 4 }}>
+              Complete this workout to set your ghost for next time.
+            </Paragraph>
           </Card.Content>
         </Card>
       )}

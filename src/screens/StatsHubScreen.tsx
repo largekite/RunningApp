@@ -26,10 +26,10 @@ function daysUntil(dateStr: string): number {
   return Math.round((race.getTime() - today.getTime()) / 86400000);
 }
 
-function getFtpPace(goalFinishTime?: string): string {
+function getFtpPace(goalFinishTime?: string, goalDistance?: number): string {
   if (!goalFinishTime) return FALLBACK_FTP;
   try {
-    const paces = calculatePacesFromGoalTime(goalFinishTime, 50);
+    const paces = calculatePacesFromGoalTime(goalFinishTime, goalDistance ?? 26.2);
     return paces.tempo ?? FALLBACK_FTP;
   } catch {
     return FALLBACK_FTP;
@@ -91,7 +91,7 @@ export default function StatsHubScreen({ navigation }: Props) {
   const trainingLoad = useMemo(() => {
     const checkIns = Object.values(state.checkIns);
     if (checkIns.length === 0) return null;
-    const ftpPace = getFtpPace(state.user?.goalFinishTime);
+    const ftpPace = getFtpPace(state.user?.goalFinishTime, state.trainingPlan?.goalDistance);
     return TrainingLoadService.getCurrentLoad(checkIns, ftpPace);
   }, [state.checkIns, state.user]);
 

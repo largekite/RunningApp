@@ -6,7 +6,9 @@
  * Convert pace string (e.g., "8:30") to seconds per mile
  */
 export function paceToSeconds(pace: string): number {
+  if (!pace || !pace.includes(':')) return NaN;
   const [minutes, seconds] = pace.split(':').map(Number);
+  if (isNaN(minutes) || isNaN(seconds)) return NaN;
   return minutes * 60 + seconds;
 }
 
