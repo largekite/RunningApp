@@ -16,7 +16,7 @@ import { useApp } from '../context/AppContext';
 
 const uuidv4 = uuid.v4;
 import { ActivityCheckIn, DailyWorkout, RPE, QualityScore } from '../context/types';
-import { calculatePace } from '../utils/paceCalculator';
+import { calculatePace, paceToSeconds } from '../utils/paceCalculator';
 import AdaptationService from '../services/adaptation.service';
 import { getDynamicWeekNumber } from '../utils/dateHelpers';
 import NotificationService from '../services/notification.service';
@@ -25,24 +25,35 @@ interface Props {
   route: {
     params: {
       workout: DailyWorkout;
+      prefill?: {
+        distance: string;
+        duration: string;
+        pace: string;
+        elevationGainFt?: number;
+        elevationLossFt?: number;
+      };
     };
   };
   navigation: any;
 }
 
 export function CheckInScreen({ route, navigation }: Props) {
-  const { workout } = route.params;
+  const { workout, prefill } = route.params;
   const { state, addCheckIn, updateTrainingPlan } = useApp();
 
-  // Form state
+  // Form state — prefill from GPS if available
   const [completed, setCompleted] = useState(true);
-  const [distance, setDistance] = useState(workout.targetDistance?.toString() || '');
-  const [duration, setDuration] = useState('');
+  const [distance, setDistance] = useState(
+    prefill?.distance ?? workout.targetDistance?.toString() ?? ''
+  );
+  const [duration, setDuration] = useState(prefill?.duration ?? '');
   const [rpe, setRpe] = useState<RPE>(3);
   const [sleepHours, setSleepHours] = useState('7.5');
   const [sleepQuality, setSleepQuality] = useState<QualityScore>(3);
   const [nutritionScore, setNutritionScore] = useState<QualityScore>(3);
   const [notes, setNotes] = useState('');
+  const [selectedShoeId, setSelectedShoeId] = useState<string | null>(null);
+  const [avgHR, setAvgHR] = useState('');
   const [loading, setLoading] = useState(false);
 
   // Calculated pace
@@ -80,10 +91,6 @@ export function CheckInScreen({ route, navigation }: Props) {
     return h > 0 ? `${h}h ${m}m` : `${m}m`;
   };
 
-  const paceToSeconds = (pace: string) => {
-    const [min, sec] = pace.split(':').map(Number);
-    return min * 60 + (sec || 0);
-  };
 
   // PR detection: best pace and longest run for this workout type
   const prData = useMemo(() => {
@@ -156,6 +163,47 @@ export function CheckInScreen({ route, navigation }: Props) {
     return { score, label: 'Low', color: '#c62828' };
   }, [state.checkIns]);
 
+  // Find the first rest day AFTER this workout in the same week
+  const findRescheduleCandidate = (): DailyWorkout | null => {
+    if (!state.trainingPlan || workout.type === 'rest') return null;
+    for (const week of state.trainingPlan.weeks) {
+      const inThisWeek = week.workouts.some(w => w.id === workout.id);
+      if (!inThisWeek) continue;
+      return week.workouts.find(w => w.type === 'rest' && w.date > workout.date) || null;
+    }
+    return null;
+  };
+
+  const swapWithRestDay = async (restDay: DailyWorkout) => {
+    if (!state.trainingPlan) return;
+    const updatedWeeks = state.trainingPlan.weeks.map(week => {
+      const hasOriginal = week.workouts.some(w => w.id === workout.id);
+      const hasRest = week.workouts.some(w => w.id === restDay.id);
+      if (!hasOriginal || !hasRest) return week;
+      return {
+        ...week,
+        workouts: week.workouts.map(w => {
+          if (w.id === workout.id) {
+            // Original slot becomes rest
+            return { ...restDay, date: workout.date, id: workout.id };
+          }
+          if (w.id === restDay.id) {
+            // Rest slot becomes the workout (rescheduled)
+            return {
+              ...workout,
+              date: restDay.date,
+              id: restDay.id,
+              modified: true,
+              modificationReason: `Rescheduled from ${workout.date}`,
+            };
+          }
+          return w;
+        }),
+      };
+    });
+    await updateTrainingPlan({ weeks: updatedWeeks });
+  };
+
   const handleSubmit = async () => {
     // Validation
     if (completed && workout.type !== 'rest' && (!distance || !duration)) {
@@ -180,6 +228,10 @@ export function CheckInScreen({ route, navigation }: Props) {
         sleepQuality,
         nutritionScore,
         notes: notes.trim() || undefined,
+        shoeId: completed && selectedShoeId ? selectedShoeId : undefined,
+        avgHR: avgHR ? parseInt(avgHR, 10) : undefined,
+        elevationGainFt: prefill?.elevationGainFt,
+        elevationLossFt: prefill?.elevationLossFt,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       };
@@ -190,13 +242,44 @@ export function CheckInScreen({ route, navigation }: Props) {
       // Cancel the evening nudge — workout is logged
       await NotificationService.cancelEveningNudge();
 
-      // If completed, run adaptation algorithm for future workouts
-      if (completed && state.trainingPlan) {
+      if (!completed) {
+        // Offer to reschedule to a rest day later this week
+        const candidate = findRescheduleCandidate();
+        if (candidate) {
+          const dayName = new Date(candidate.date + 'T12:00:00').toLocaleDateString('en-US', {
+            weekday: 'long', month: 'short', day: 'numeric',
+          });
+          Alert.alert(
+            'Reschedule Workout?',
+            `Move this workout to ${dayName} (currently a rest day)?`,
+            [
+              { text: 'No', style: 'cancel', onPress: () => navigation.goBack() },
+              {
+                text: 'Reschedule',
+                onPress: async () => {
+                  await swapWithRestDay(candidate);
+                  Alert.alert('Rescheduled!', `Workout moved to ${dayName}.`, [
+                    { text: 'OK', onPress: () => navigation.goBack() },
+                  ]);
+                },
+              },
+            ]
+          );
+        } else {
+          Alert.alert('Workout Skipped', 'Workout marked as skipped.', [
+            { text: 'OK', onPress: () => navigation.goBack() },
+          ]);
+        }
+        return;
+      }
+
+      // Completed — run adaptation algorithm for future workouts
+      if (state.trainingPlan) {
         adaptFutureWorkouts(checkIn);
       }
 
-      let successMsg = completed ? 'Workout logged!' : 'Workout marked as skipped.';
-      if (completed && ghostData && calculatedPace && ghostData.actualPace) {
+      let successMsg = 'Workout logged!';
+      if (ghostData && calculatedPace && ghostData.actualPace) {
         const diffSecs = paceToSeconds(ghostData.actualPace) - paceToSeconds(calculatedPace);
         if (diffSecs > 0) {
           const m = Math.floor(Math.abs(diffSecs) / 60);
@@ -283,6 +366,17 @@ export function CheckInScreen({ route, navigation }: Props) {
 
   return (
     <ScrollView style={styles.container}>
+      {/* GPS pre-fill banner */}
+      {prefill && (
+        <Card style={styles.gpsBanner}>
+          <Card.Content>
+            <Paragraph style={styles.gpsBannerText}>
+              GPS data imported — {prefill.distance} mi @ {prefill.pace}/mi. Review and save below.
+            </Paragraph>
+          </Card.Content>
+        </Card>
+      )}
+
       {/* Readiness Score */}
       {readiness && (
         <Card style={styles.card}>
@@ -324,7 +418,7 @@ export function CheckInScreen({ route, navigation }: Props) {
             <View style={styles.ghostHeader}>
               <Paragraph style={styles.ghostTitle}>👻 Your Ghost</Paragraph>
               <Paragraph style={styles.ghostDate}>
-                {new Date(ghostData.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                {new Date(ghostData.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
               </Paragraph>
             </View>
             <View style={styles.ghostStats}>
@@ -353,28 +447,30 @@ export function CheckInScreen({ route, navigation }: Props) {
         </Card>
       )}
 
-      {/* Completion Toggle */}
-      <Card style={styles.card}>
-        <Card.Content>
-          <Title>Did you complete this workout?</Title>
-          <View style={styles.buttonRow}>
-            <Button
-              mode={completed ? 'contained' : 'outlined'}
-              onPress={() => setCompleted(true)}
-              style={styles.toggleButton}
-            >
-              Yes
-            </Button>
-            <Button
-              mode={!completed ? 'contained' : 'outlined'}
-              onPress={() => setCompleted(false)}
-              style={styles.toggleButton}
-            >
-              No, I skipped it
-            </Button>
-          </View>
-        </Card.Content>
-      </Card>
+      {/* Completion Toggle — hidden for rest days and when GPS data is already imported */}
+      {workout.type !== 'rest' && !prefill && (
+        <Card style={styles.card}>
+          <Card.Content>
+            <Title>Did you complete this workout?</Title>
+            <View style={styles.buttonRow}>
+              <Button
+                mode={completed ? 'contained' : 'outlined'}
+                onPress={() => setCompleted(true)}
+                style={styles.toggleButton}
+              >
+                Yes
+              </Button>
+              <Button
+                mode={!completed ? 'contained' : 'outlined'}
+                onPress={() => setCompleted(false)}
+                style={styles.toggleButton}
+              >
+                No, I skipped it
+              </Button>
+            </View>
+          </Card.Content>
+        </Card>
+      )}
 
       {/* Workout Details (if completed and not a rest day) */}
       {completed && workout.type !== 'rest' && (
@@ -435,6 +531,42 @@ export function CheckInScreen({ route, navigation }: Props) {
               <Paragraph style={styles.sliderLabel}>Very Easy</Paragraph>
               <Paragraph style={styles.sliderLabel}>Very Hard</Paragraph>
             </View>
+
+            {state.shoes.filter(s => !s.retired).length > 0 && (
+              <>
+                <Divider style={styles.divider} />
+                <Paragraph style={styles.sliderTitle}>Shoes Worn</Paragraph>
+                <View style={styles.shoeChips}>
+                  {state.shoes.filter(s => !s.retired).map(shoe => (
+                    <Chip
+                      key={shoe.id}
+                      mode={selectedShoeId === shoe.id ? 'flat' : 'outlined'}
+                      selected={selectedShoeId === shoe.id}
+                      onPress={() => setSelectedShoeId(selectedShoeId === shoe.id ? null : shoe.id)}
+                      style={styles.shoeChip}
+                    >
+                      {shoe.name}
+                    </Chip>
+                  ))}
+                </View>
+              </>
+            )}
+
+            <Divider style={styles.divider} />
+            <TextInput
+              label="Average Heart Rate (bpm, optional)"
+              value={avgHR}
+              onChangeText={setAvgHR}
+              keyboardType="number-pad"
+              mode="outlined"
+              style={styles.input}
+              right={<TextInput.Affix text="bpm" />}
+            />
+            {prefill?.elevationGainFt != null && (
+              <HelperText type="info">
+                Elevation: ↑ {prefill.elevationGainFt} ft  ↓ {prefill.elevationLossFt ?? 0} ft (from GPS)
+              </HelperText>
+            )}
           </Card.Content>
         </Card>
       )}
@@ -639,6 +771,16 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
   },
+  gpsBanner: {
+    marginBottom: 16,
+    backgroundColor: '#e8f5e9',
+    borderLeftWidth: 4,
+    borderLeftColor: '#4caf50',
+  },
+  gpsBannerText: {
+    color: '#2e7d32',
+    fontSize: 13,
+  },
   prBanner: {
     backgroundColor: '#e8f5e9',
     borderRadius: 6,
@@ -649,5 +791,14 @@ const styles = StyleSheet.create({
     color: '#2e7d32',
     fontWeight: 'bold',
     fontSize: 13,
+  },
+  shoeChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  shoeChip: {
+    marginBottom: 4,
   },
 });

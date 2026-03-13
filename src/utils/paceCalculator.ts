@@ -50,7 +50,7 @@ export function adjustPace(pace: string, percentChange: number): string {
  */
 export function getRecommendedPace(
   easyPace: string,
-  workoutType: 'easy_run' | 'long_run' | 'tempo' | 'intervals' | 'recovery' | 'rest' | 'strides' | 'fartlek' | 'hill_repeats' | 'cross_training'
+  workoutType: 'easy_run' | 'long_run' | 'tempo' | 'intervals' | 'recovery' | 'rest' | 'strides' | 'fartlek' | 'hill_repeats' | 'cross_training' | 'benchmark'
 ): string {
   const easySeconds = paceToSeconds(easyPace);
 
@@ -122,9 +122,24 @@ export function calculatePacesFromGoalTime(goalFinishTime: string, goalDistance:
 export interface PaceZones {
   recovery: string;
   easy: string;
+  longRun: string;
   tempo: string;
   threshold: string;
   interval: string;
+}
+
+/**
+ * Grade-Adjusted Pace using Minetti's energy cost model approximation.
+ * gradePercent: positive = uphill, negative = downhill
+ * Returns equivalent flat-terrain pace string.
+ */
+export function gradeAdjustedPace(pace: string, gradePercent: number): string {
+  const flatPaceSeconds = paceToSeconds(pace);
+  // Minetti coefficient: energy cost relative to flat
+  // Simplified: C_r(grade) = 3.6 * grade^2 + 0.3 * grade + 1  (valid -30% to +30%)
+  const g = gradePercent / 100;
+  const costRatio = Math.max(0.5, 3.6 * g * g + 0.3 * g + 1);
+  return secondsToPace(flatPaceSeconds / costRatio);
 }
 
 export function calculatePaceZones(easyPace: string): PaceZones {
@@ -133,6 +148,7 @@ export function calculatePaceZones(easyPace: string): PaceZones {
   return {
     recovery: secondsToPace(easySeconds * 1.15),
     easy: easyPace,
+    longRun: secondsToPace(easySeconds * 1.05),
     tempo: secondsToPace(easySeconds * 0.92),
     threshold: secondsToPace(easySeconds * 0.88),
     interval: secondsToPace(easySeconds * 0.85),

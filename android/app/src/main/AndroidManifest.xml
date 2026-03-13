@@ -2,6 +2,15 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- Location — required for GPS run tracking -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
+    <!-- Notifications — required for workout reminders (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
@@ -23,5 +32,11 @@
             <category android:name="android.intent.category.LAUNCHER" />
         </intent-filter>
       </activity>
+
+      <!--
+        BEFORE RELEASE: Replace YOUR_GOOGLE_MAPS_API_KEY_HERE with a real key from
+        https://console.cloud.google.com/ (enable Maps SDK for Android).
+      -->
+      <!-- <meta-data android:name="com.google.android.geo.API_KEY" android:value="YOUR_GOOGLE_MAPS_API_KEY_HERE"/> -->
     </application>
 </manifest>

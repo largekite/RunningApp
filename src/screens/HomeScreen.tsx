@@ -1,15 +1,48 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { View, ScrollView, StyleSheet } from 'react-native';
-import { Card, Title, Paragraph, Button, Chip, Divider } from 'react-native-paper';
+import { Card, Title, Paragraph, Button, Chip, Divider, ProgressBar } from 'react-native-paper';
 import { useApp } from '../context/AppContext';
-import { getTodayDate, getDynamicWeekNumber } from '../utils/dateHelpers';
+import { getTodayDate, getDynamicWeekNumber, formatDate } from '../utils/dateHelpers';
 import NutritionService from '../services/nutrition.service';
 import { getSleepRecommendation } from '../constants/sleepGuidelines';
+import WeatherService, { WeatherData } from '../services/weather.service';
 import { DailyWorkout } from '../context/types';
+
+// Lazy load training load service
+let TrainingLoadService: any = null;
+try { TrainingLoadService = require('../services/trainingLoad.service').default; } catch {}
 
 export function HomeScreen({ navigation }: any) {
   const { state } = useApp();
   const today = getTodayDate();
+
+  const [weather, setWeather] = useState<WeatherData | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    WeatherService.getWeather().then(data => {
+      if (!cancelled) { setWeather(data); setWeatherLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Training load (TSB)
+  const trainingLoad = useMemo(() => {
+    if (!TrainingLoadService) return null;
+    try {
+      const ftpPace = state.user?.goalFinishTime ? undefined : '9:30';
+      const checkIns = Object.values(state.checkIns).filter(c => c.completed);
+      if (checkIns.length === 0) return null;
+      return TrainingLoadService.getCurrentLoad(checkIns, ftpPace ?? '9:30');
+    } catch { return null; }
+  }, [state.checkIns, state.user]);
+
+  // Today's hydration
+  const todayHydration = state.hydrationLogs[today];
+  const hydratedMl = todayHydration?.entries.reduce((s, e) => s + e.amountMl, 0) ?? 0;
+  const hydrationGoalMl = todayHydration?.goalMl ?? 2500;
+  const hydrationRatio = Math.min(hydratedMl / hydrationGoalMl, 1);
 
   // Get today's workout
   const todayWorkout = useMemo(() => {
@@ -39,10 +72,10 @@ export function HomeScreen({ navigation }: any) {
     const currentWeek = state.trainingPlan.weeks.find((w) => w.weekNumber === dynamicWeek);
     const weeklyMileage = currentWeek?.totalMileage || 0;
 
-    // Get tomorrow's workout
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowDate = tomorrow.toISOString().split('T')[0];
+    // Get tomorrow's workout (use formatDate to get local date, not UTC)
+    const tomorrowLocal = new Date();
+    tomorrowLocal.setDate(tomorrowLocal.getDate() + 1);
+    const tomorrowDate = formatDate(tomorrowLocal);
 
     let tomorrowWorkout: DailyWorkout | undefined;
     for (const week of state.trainingPlan.weeks) {
@@ -61,13 +94,16 @@ export function HomeScreen({ navigation }: any) {
   };
 
   if (!todayWorkout) {
+    const hasActivePlan = !!state.trainingPlan;
     return (
       <ScrollView style={styles.container}>
         <Card style={styles.card}>
           <Card.Content>
-            <Title>No Workout Planned</Title>
+            <Title>{hasActivePlan ? 'No Workout Today' : 'Get Started'}</Title>
             <Paragraph>
-              You don't have a training plan set up yet. Complete onboarding to get started!
+              {hasActivePlan
+                ? "Today is outside your training plan window. Check the Calendar to see your full schedule."
+                : "You don't have a training plan yet. Go through onboarding to build your personalized plan."}
             </Paragraph>
           </Card.Content>
         </Card>
@@ -158,16 +194,66 @@ export function HomeScreen({ navigation }: any) {
           )}
         </Card.Content>
 
-        <Card.Actions>
-          <Button
-            mode="contained"
-            onPress={() => navigation.navigate('CheckIn', { workout: todayWorkout })}
-            disabled={!!todayCheckIn}
-          >
-            {todayCheckIn ? '✓ Checked In' : 'Check In'}
-          </Button>
+        <Card.Actions style={styles.cardActions}>
+          {todayWorkout.type !== 'rest' && !todayCheckIn && (
+            <Button
+              mode="contained"
+              onPress={() => navigation.navigate('LiveRun', { workout: todayWorkout })}
+              style={styles.startRunBtn}
+              icon="run"
+            >
+              Start Run
+            </Button>
+          )}
+          {!todayCheckIn ? (
+            <Button
+              mode="outlined"
+              onPress={() => navigation.navigate('CheckIn', { workout: todayWorkout })}
+            >
+              Log Manually
+            </Button>
+          ) : (
+            <Button mode="outlined" disabled icon="check">
+              Done
+            </Button>
+          )}
         </Card.Actions>
       </Card>
+
+      {/* Weather Card */}
+      {!weatherLoading && weather && (
+        <Card style={styles.card}>
+          <Card.Content>
+            <View style={styles.weatherHeader}>
+              <Title>
+                {weather.icon} {weather.condition}
+              </Title>
+              <Title style={styles.weatherTemp}>{weather.temperature}°F</Title>
+            </View>
+
+            <View style={styles.weatherStats}>
+              <View style={styles.weatherStat}>
+                <Paragraph style={styles.weatherStatLabel}>Feels like</Paragraph>
+                <Paragraph style={styles.weatherStatValue}>{weather.feelsLike}°F</Paragraph>
+              </View>
+              <View style={styles.weatherStat}>
+                <Paragraph style={styles.weatherStatLabel}>Humidity</Paragraph>
+                <Paragraph style={styles.weatherStatValue}>{weather.humidity}%</Paragraph>
+              </View>
+              <View style={styles.weatherStat}>
+                <Paragraph style={styles.weatherStatLabel}>Wind</Paragraph>
+                <Paragraph style={styles.weatherStatValue}>{weather.windSpeed} mph</Paragraph>
+              </View>
+            </View>
+
+            <View style={[styles.adviceBanner, { backgroundColor: weather.adviceColor + '22' }]}>
+              <Paragraph style={[styles.adviceText, { color: weather.adviceColor }]}>
+                {weather.runningAdvice}
+              </Paragraph>
+            </View>
+          </Card.Content>
+        </Card>
+      )}
 
       {/* Nutrition Tip Card */}
       {nutritionTip && (
@@ -219,6 +305,64 @@ export function HomeScreen({ navigation }: any) {
           </Card.Content>
         </Card>
       )}
+
+      {/* Training Load Card */}
+      {trainingLoad && (
+        <Card style={styles.card}>
+          <Card.Content>
+            <View style={styles.header}>
+              <Title>Training Load</Title>
+              <Button compact mode="text" onPress={() => navigation.navigate('TrainingLoad')}>
+                Details
+              </Button>
+            </View>
+            <View style={styles.weeklyStats}>
+              <View style={styles.stat}>
+                <Paragraph style={styles.statLabel}>Form (TSB)</Paragraph>
+                <Title style={{ color: trainingLoad.color }}>
+                  {trainingLoad.tsb > 0 ? '+' : ''}{Math.round(trainingLoad.tsb)}
+                </Title>
+                <Paragraph style={[styles.phaseText, { color: trainingLoad.color }]}>
+                  {trainingLoad.label}
+                </Paragraph>
+              </View>
+              <View style={styles.stat}>
+                <Paragraph style={styles.statLabel}>Fitness (CTL)</Paragraph>
+                <Title>{Math.round(trainingLoad.ctl)}</Title>
+              </View>
+              <View style={styles.stat}>
+                <Paragraph style={styles.statLabel}>Fatigue (ATL)</Paragraph>
+                <Title>{Math.round(trainingLoad.atl)}</Title>
+              </View>
+            </View>
+          </Card.Content>
+        </Card>
+      )}
+
+      {/* Hydration Card */}
+      <Card style={styles.card}>
+        <Card.Content>
+          <View style={styles.header}>
+            <Title>Hydration</Title>
+            <Button compact mode="text" onPress={() => navigation.navigate('Hydration')}>
+              Log
+            </Button>
+          </View>
+          <View style={styles.hydrationRow}>
+            <Paragraph style={styles.hydrationMl}>
+              {hydratedMl >= 1000 ? `${(hydratedMl / 1000).toFixed(1)}L` : `${hydratedMl}ml`}
+              {' / '}
+              {hydrationGoalMl >= 1000 ? `${(hydrationGoalMl / 1000).toFixed(1)}L` : `${hydrationGoalMl}ml`}
+            </Paragraph>
+            <Paragraph style={styles.hydrationPct}>{Math.round(hydrationRatio * 100)}%</Paragraph>
+          </View>
+          <ProgressBar
+            progress={hydrationRatio}
+            color={hydrationRatio >= 1 ? '#2e7d32' : '#2196f3'}
+            style={styles.hydrationBar}
+          />
+        </Card.Content>
+      </Card>
 
       {/* Weekly Progress Summary */}
       {state.trainingPlan && (() => {
@@ -349,6 +493,15 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     textAlign: 'center',
   },
+  cardActions: {
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 8,
+    paddingBottom: 8,
+  },
+  startRunBtn: {
+    flex: 1,
+  },
   segmentsLabel: {
     fontWeight: 'bold',
     fontSize: 13,
@@ -409,5 +562,60 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     lineHeight: 17,
+  },
+  weatherHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  weatherTemp: {
+    fontSize: 28,
+    color: '#6200ea',
+  },
+  weatherStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 12,
+  },
+  weatherStat: {
+    alignItems: 'center',
+  },
+  weatherStatLabel: {
+    fontSize: 12,
+    color: '#666',
+  },
+  weatherStatValue: {
+    fontWeight: 'bold',
+    fontSize: 14,
+    color: '#222',
+  },
+  adviceBanner: {
+    borderRadius: 6,
+    padding: 10,
+  },
+  adviceText: {
+    fontWeight: 'bold',
+    fontSize: 13,
+    textAlign: 'center',
+  },
+  hydrationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  hydrationMl: {
+    fontSize: 14,
+    color: '#444',
+  },
+  hydrationPct: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#2196f3',
+  },
+  hydrationBar: {
+    height: 8,
+    borderRadius: 4,
   },
 });

@@ -1,18 +1,23 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, ScrollView, StyleSheet, FlatList } from 'react-native';
-import { Card, Title, Paragraph, Chip } from 'react-native-paper';
+import { Card, Title, Paragraph, Chip, IconButton } from 'react-native-paper';
 import { useApp } from '../context/AppContext';
 import { DailyWorkout } from '../context/types';
 import { getWeekStart, getWeekDates, formatDate } from '../utils/dateHelpers';
 import { PlanOverview } from '../components/PlanOverview';
+import { addDays } from 'date-fns';
 
 export function CalendarScreen() {
   const { state } = useApp();
+  const [weekOffset, setWeekOffset] = useState(0);
 
-  // Get current week
+  // Get the displayed week based on offset
   const today = new Date();
-  const weekStart = getWeekStart(today, 0); // Sunday
+  const baseWeekStart = getWeekStart(today, 0); // Sunday of current week
+  const weekStart = addDays(baseWeekStart, weekOffset * 7);
   const weekDates = getWeekDates(weekStart);
+
+  const isCurrentWeek = weekOffset === 0;
 
   // Build a lookup of all workouts by date
   const workoutsByDate = React.useMemo(() => {
@@ -49,7 +54,8 @@ export function CalendarScreen() {
   };
 
   const getDayName = (date: string) => {
-    const d = new Date(date);
+    // Append noon to avoid UTC midnight being interpreted as previous day in negative-offset timezones
+    const d = new Date(date + 'T12:00:00');
     return d.toLocaleDateString('en-US', { weekday: 'short' });
   };
 
@@ -103,12 +109,25 @@ export function CalendarScreen() {
 
       <Card style={styles.headerCard}>
         <Card.Content>
-          <Title>This Week</Title>
-          {currentWeek && (
-            <>
-              <Paragraph>Week {currentWeek.weekNumber} - {currentWeek.focus}</Paragraph>
-              <Paragraph>Target: {currentWeek.totalMileage} miles</Paragraph>
-            </>
+          <View style={styles.weekNav}>
+            <IconButton icon="chevron-left" size={24} onPress={() => setWeekOffset(o => o - 1)} />
+            <View style={styles.weekNavCenter}>
+              <Title style={styles.weekNavTitle}>
+                {isCurrentWeek ? 'This Week' : formatDate(weekStart).slice(5).replace('-', '/') + ' – ' + formatDate(addDays(weekStart, 6)).slice(5).replace('-', '/')}
+              </Title>
+              {currentWeek && (
+                <>
+                  <Paragraph style={styles.weekSubtitle}>Week {currentWeek.weekNumber} · {currentWeek.focus}</Paragraph>
+                  <Paragraph style={styles.weekSubtitle}>Target: {currentWeek.totalMileage} miles</Paragraph>
+                </>
+              )}
+            </View>
+            <IconButton icon="chevron-right" size={24} onPress={() => setWeekOffset(o => o + 1)} />
+          </View>
+          {!isCurrentWeek && (
+            <Paragraph style={styles.jumpLink} onPress={() => setWeekOffset(0)}>
+              Back to current week
+            </Paragraph>
           )}
         </Card.Content>
       </Card>
@@ -131,6 +150,29 @@ const styles = StyleSheet.create({
   },
   headerCard: {
     marginBottom: 16,
+  },
+  weekNav: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  weekNavCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  weekNavTitle: {
+    fontSize: 16,
+  },
+  weekSubtitle: {
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
+  },
+  jumpLink: {
+    fontSize: 12,
+    color: '#6200ea',
+    textAlign: 'center',
+    marginTop: 4,
   },
   dayCard: {
     marginBottom: 12,
